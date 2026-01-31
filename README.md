@@ -1,4 +1,4 @@
-# ROS_Utility_Board_Interface
+# RUBI (ROS_Utility_Board_Interface)
 RUBI: A clean ROS 2 utility board showing live topic rates/delays, pub/sub nodes, services, actions, and system overview.
 
 ![RUBI Banner](https://github.com/user-attachments/assets/b971837f-8fa6-4d51-ab8a-e1d1a6dbc03c)
