@@ -1,29 +1,8 @@
 # ROS_Utility_Board_Interface
 RUBI: A clean ROS 2 utility board showing live topic rates/delays, pub/sub nodes, services, actions, and system overview.
-<div align="center">
 
-<h1>RUBI – Realtime Unified Bot Inspector</h1>
+![RUBI Banner](https://github.com/user-attachments/assets/b971837f-8fa6-4d51-ab8a-e1d1a6dbc03c)
 
-<p>
-  <strong>A beautiful, lightweight, real-time ROS 2 system overview & health monitor</strong>
-</p>
-
-<p>
-  <a href="https://github.com/[your-username]/rubi-ros-monitor/stargazers">
-    <img src="https://img.shields.io/github/stars/[your-username]/rubi-ros-monitor?style=social" alt="GitHub stars">
-  </a>
-  <a href="https://github.com/[your-username]/rubi-ros-monitor/issues">
-    <img src="https://img.shields.io/github/issues/[your-username]/rubi-ros-monitor" alt="GitHub issues">
-  </a>
-  <img src="https://img.shields.io/badge/ROS%202-Humble%20|%20Iron%20|%20Jazzy-blue" alt="ROS 2 versions">
-  <img src="https://img.shields.io/badge/Python-3.8%2B-green" alt="Python">
-</p>
-
-</div>
-
-<br>
-
-https://github.com/user-attachments/assets/xxxx-xxxx-xxxx-xxxx-xxxx  <!-- replace with a short demo GIF/video -->
 
 ### What is RUBI?
 
