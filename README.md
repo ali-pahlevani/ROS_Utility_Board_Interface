@@ -45,7 +45,7 @@ python3 rubi.py
 
 I’d **love collaborations**! Contribute via pull requests on *GitHub* for bug fixes, new features, or documentation improvements. Reach out via *GitHub Issues* for questions, suggestions, or partnership ideas.
 
-## Contributing
+### Contributing
 
 Contributions are welcome! To contribute:
 
@@ -54,8 +54,6 @@ Contributions are welcome! To contribute:
 3. Commit changes (`git commit -m "Add your feature"`).
 4. Push to the branch (`git push origin feature/your-feature`).
 5. Open a pull request.
-
-Please include tests and documentation updates. For major changes, discuss in a *GitHub Issue* first.
 
 ---
 
