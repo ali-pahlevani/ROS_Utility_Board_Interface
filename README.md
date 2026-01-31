@@ -1,5 +1,5 @@
 # RUBI (ROS_Utility_Board_Interface)
-RUBI: A clean ROS 2 utility board showing live topic rates/delays, pub/sub nodes, services, actions, and system overview.
+**RUBI**: A clean ROS 2 utility board showing live topic rates/delays, pub/sub nodes, services, actions, and system overview.
 
 ![RUBI Banner](https://github.com/user-attachments/assets/b971837f-8fa6-4d51-ab8a-e1d1a6dbc03c)
 
@@ -38,6 +38,6 @@ source /opt/ros/humble/setup.bash   # or iron, jazzy, etc.
 pip install dearpygui
 
 # 3. Clone & run
-git clone https://github.com/[your-username]/rubi-ros-monitor.git
-cd rubi-ros-monitor
-python3 health_app.py   # or rename to rubi.py if you prefer
+git clone https://github.com/ali-pahlevani/ROS_Utility_Board_Interface.git
+cd ROS_Utility_Board_Interface
+python3 rubi.py
