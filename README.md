@@ -8,14 +8,13 @@
 
 **RUBI** gives you a single, clean window to understand your ROS 2 robot at a glance:
 
-- Live topic publication rates & delays (color-coded: red = slow, green = fast)
+- Live topic publication rates & delays
 - Publisher & subscriber nodes per topic
 - All services with their server nodes
 - All actions with their server nodes
 - Full node list
 - Global search across everything
-- Freeze / Unfreeze updates so you can comfortably read & copy long lists
-- Select & copy any text (topic names, node lists, rates, etc.)
+- Freeze / Unfreeze updates
 
 No heavy dependencies. Runs fast even on embedded systems.
 
@@ -24,8 +23,7 @@ No heavy dependencies. Runs fast even on embedded systems.
 - **Realtime monitoring** — rates & delays updated every ~0.4s from actual subscriptions
 - **QoS friendly** — uses BEST_EFFORT by default to avoid common incompatibility warnings
 - **Multi-tab interface** — Topics / Services / Actions / Nodes
-- **Freeze mode** — stop updates to read long node lists or copy text without jumping
-- **Copy-paste ready** — select any cell content and copy (Ctrl+C)
+- **Freeze mode** — stop updates to read long node lists
 - **Beautiful & minimal** — Dear PyGui + clean layout
 
 ### Installation
