@@ -6,7 +6,7 @@
 
 ### What is RUBI?
 
-RUBI gives you a single, clean window to understand your ROS 2 robot at a glance:
+**RUBI** gives you a single, clean window to understand your ROS 2 robot at a glance:
 
 - Live topic publication rates & delays (color-coded: red = slow, green = fast)
 - Publisher & subscriber nodes per topic
