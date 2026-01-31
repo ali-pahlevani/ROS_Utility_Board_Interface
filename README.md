@@ -41,3 +41,24 @@ pip install dearpygui
 git clone https://github.com/ali-pahlevani/ROS_Utility_Board_Interface.git
 cd ROS_Utility_Board_Interface
 python3 rubi.py
+
+
+I’d **love collaborations**! Contribute via pull requests on *GitHub* for bug fixes, new features, or documentation improvements. Reach out via *GitHub Issues* for questions, suggestions, or partnership ideas.
+
+## Contributing
+
+Contributions are welcome! To contribute:
+
+1. Fork the repository.
+2. Create a branch (`git checkout -b feature/your-feature`).
+3. Commit changes (`git commit -m "Add your feature"`).
+4. Push to the branch (`git push origin feature/your-feature`).
+5. Open a pull request.
+
+Please include tests and documentation updates. For major changes, discuss in a *GitHub Issue* first.
+
+---
+
++ If you have any questions, please let me know: **a.pahlevani1998@gmail.com**
+
++ Also, don't forget to check out our **website** at: **https://www.SLAMbotics.org**
