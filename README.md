@@ -1,10 +1,8 @@
 # RUBI (ROS_Utility_Board_Interface) (V2)
 **RUBI v2**: A single-window ROS 2 *control board* — not just a monitor:
-- Live topic rates/bandwidth/delays  |  QoS mismatch detection
-- Health watchdog  |  Message inspection  |  Live plotting
-- Logs  |  Parameters  |  Lifecycle control  |  TF health
-- Service/Action caller  |  Rosbag record/play
-- Graph snapshot/diff  |  Exports
+- Live topic rates/bandwidth/delays  |  QoS mismatch detection  |  Health watchdog
+- Message inspection  |  Live plotting  |  Logs  |  Parameters  |  TF health  |  Exports
+- Lifecycle control  |  Service/Action caller  |  Rosbag record/play  |  Graph snapshot/diff 
 
 ![RUBI Banner](https://github.com/user-attachments/assets/429bd575-41b3-4508-8a38-fa521a028bad)
 
