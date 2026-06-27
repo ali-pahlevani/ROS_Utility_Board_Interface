@@ -1,0 +1,24 @@
+# RUBI health-watchdog rules (v2).
+#
+# Each entry maps a topic name (or a glob pattern) to expected limits.
+# A topic turns ✗ FAIL in the Health column when any limit is violated:
+#   min_hz     - minimum acceptable publish rate (Hz)
+#   max_hz     - maximum acceptable publish rate (Hz)
+#   max_delay  - maximum acceptable header-stamp delay (seconds)
+#
+# Topics without a matching rule show "—" (not evaluated).
+# Run with:  python3 rubi.py --rules rubi_rules.yaml
+
+topics:
+  "/scan":
+    min_hz: 8
+    max_hz: 12
+  "/odom":
+    min_hz: 20
+    max_delay: 0.1
+  "/tf":
+    min_hz: 30
+  "/camera/*/image_raw":
+    min_hz: 25
+  "/cmd_vel":
+    max_hz: 50

@@ -2,12 +2,22 @@
 
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+from rclpy.qos import (QoSProfile, ReliabilityPolicy, HistoryPolicy,
+                       QoSReliabilityPolicy, QoSDurabilityPolicy)
+from rclpy.serialization import serialize_message
 import dearpygui.dearpygui as dpg
 import threading
 import time
 import importlib
+import argparse
+import fnmatch
+import os
 from collections import deque
+
+try:
+    import yaml
+except ImportError:
+    yaml = None
 
 # ---- Shared color palette (legend and table cells use the SAME constants) ----
 C_LOW = (255, 107, 107)   # rate < 1 Hz
@@ -15,11 +25,103 @@ C_MID = (210, 210, 210)   # 1 Hz <= rate <= 10 Hz
 C_HIGH = (107, 222, 107)  # rate > 10 Hz
 C_MUTED = (170, 170, 180)
 C_ACCENT = (94, 169, 255)
+C_WARN = (255, 184, 77)
+C_TEXT = (228, 230, 235)  # default cell text (used to reset colored cells)
+
+
+# ---- QoS helpers (v2: mismatch detection) --------------------------------
+def _rel_code(r):
+    return {QoSReliabilityPolicy.RELIABLE: 'R',
+            QoSReliabilityPolicy.BEST_EFFORT: 'BE'}.get(r, '?')
+
+
+def _dur_code(d):
+    return {QoSDurabilityPolicy.VOLATILE: 'V',
+            QoSDurabilityPolicy.TRANSIENT_LOCAL: 'TL'}.get(d, '?')
+
+
+def _qos_summary(rel_set, dur_set):
+    if not rel_set:
+        return '—'
+    rc = '/'.join(sorted({_rel_code(r) for r in rel_set}))
+    dc = '/'.join(sorted({_dur_code(d) for d in dur_set}))
+    return f"{rc}·{dc}"
+
+
+def _qos_mismatch(pub_rel, pub_dur, sub_rel, sub_dur):
+    """Classic ROS 2 request/offered incompatibilities that silently drop data."""
+    reasons = []
+    if QoSReliabilityPolicy.BEST_EFFORT in pub_rel and QoSReliabilityPolicy.RELIABLE in sub_rel:
+        reasons.append('reliability: BEST_EFFORT pub vs RELIABLE sub')
+    if QoSDurabilityPolicy.VOLATILE in pub_dur and QoSDurabilityPolicy.TRANSIENT_LOCAL in sub_dur:
+        reasons.append('durability: VOLATILE pub vs TRANSIENT_LOCAL sub')
+    return reasons
+
+
+# ---- Bandwidth helper (v2) -----------------------------------------------
+def _human_bw(b):
+    if b is None:
+        return 'NaN'
+    for unit in ('B', 'KB', 'MB', 'GB'):
+        if b < 1024.0:
+            return f"{b:.0f} {unit}/s" if unit == 'B' else f"{b:.1f} {unit}/s"
+        b /= 1024.0
+    return f"{b:.1f} TB/s"
+
+
+# ---- Health watchdog (v2) -------------------------------------------------
+def load_rules(path):
+    """Load YAML health rules: {topics: {pattern: {min_hz, max_hz, max_delay}}}."""
+    if not path or yaml is None or not os.path.isfile(path):
+        return {}
+    try:
+        with open(path) as f:
+            data = yaml.safe_load(f) or {}
+        return data.get('topics', {}) or {}
+    except Exception as e:
+        print(f"[RUBI] Failed to load rules '{path}': {e}")
+        return {}
+
+
+def _match_rule(rules, name):
+    if name in rules:
+        return rules[name]
+    for pattern, rule in rules.items():
+        if fnmatch.fnmatch(name, pattern):
+            return rule
+    return None
+
+
+def topic_health(rules, name, rate, delay):
+    """Return (label, color) for the Health column based on user rules."""
+    rule = _match_rule(rules, name)
+    if not rule:
+        return ('—', C_MUTED)
+    fail = False
+    try:
+        r = float(rate)
+        if 'min_hz' in rule and r < float(rule['min_hz']):
+            fail = True
+        if 'max_hz' in rule and r > float(rule['max_hz']):
+            fail = True
+    except (ValueError, TypeError):
+        pass
+    if 'max_delay' in rule:
+        try:
+            if float(delay) > float(rule['max_delay']):
+                fail = True
+        except (ValueError, TypeError):
+            pass
+    return ('✗ FAIL', C_LOW) if fail else ('✓ OK', C_HIGH)
 
 
 class SimpleMonitorNode(Node):
     def __init__(self):
         super().__init__('ros_utility_board_interface')
+
+        # RUBI's own fully-qualified name, so it can hide its own monitoring
+        # subscriptions from the pub/sub graph it reports.
+        self._self_fqn = f"{self.get_namespace().rstrip('/')}/{self.get_name()}"
 
         self.lock = threading.Lock()
 
@@ -42,10 +144,15 @@ class SimpleMonitorNode(Node):
 
     def _topic_callback(self, msg, topic):
         now = time.time()
+        try:
+            nbytes = len(serialize_message(msg))
+        except Exception:
+            nbytes = 0
         with self.lock:
             stats = self.topic_stats.get(topic)
             if stats:
                 stats['timestamps'].append(now)
+                stats['sizes'].append(nbytes)
                 if hasattr(msg, 'header') and hasattr(msg.header, 'stamp'):
                     stamp = msg.header.stamp
                     stamp_sec = stamp.sec + stamp.nanosec * 1e-9
@@ -78,8 +185,13 @@ class SimpleMonitorNode(Node):
                             'subs': [],
                             'timestamps': deque(maxlen=200),
                             'delays': deque(maxlen=200),
+                            'sizes': deque(maxlen=200),
                             'rate': 'NaN',
-                            'delay': 'NaN'
+                            'delay': 'NaN',
+                            'bw': 'NaN',
+                            'qos': '—',
+                            'qos_bad': False,
+                            'qos_reasons': []
                         }
 
                     s = self.topic_stats[name]
@@ -93,6 +205,10 @@ class SimpleMonitorNode(Node):
                         s['subs'] = []
                         s['rate'] = 'N/A'
                         s['delay'] = 'N/A'
+                        s['bw'] = 'N/A'
+                        s['qos'] = '—'
+                        s['qos_bad'] = False
+                        s['qos_reasons'] = []
                         if name in self._my_subscriptions:
                             self.destroy_subscription(self._my_subscriptions[name])
                             del self._my_subscriptions[name]
@@ -101,8 +217,24 @@ class SimpleMonitorNode(Node):
                     pubs = self.get_publishers_info_by_topic(name)
                     s['pubs'] = sorted({f"{p.node_namespace}{p.node_name}" for p in pubs})
 
-                    subs = self.get_subscriptions_info_by_topic(name)
+                    subs = [su for su in self.get_subscriptions_info_by_topic(name)
+                            if f"{su.node_namespace}{su.node_name}" != self._self_fqn]
                     s['subs'] = sorted({f"{su.node_namespace}{su.node_name}" for su in subs})
+
+                    # ---- QoS introspection + mismatch detection (v2) ----
+                    pub_rel = {p.qos_profile.reliability for p in pubs}
+                    pub_dur = {p.qos_profile.durability for p in pubs}
+                    sub_rel = {su.qos_profile.reliability for su in subs}
+                    sub_dur = {su.qos_profile.durability for su in subs}
+                    reasons = _qos_mismatch(pub_rel, pub_dur, sub_rel, sub_dur)
+                    s['qos_bad'] = bool(reasons)
+                    s['qos_reasons'] = reasons
+                    if pub_rel:
+                        s['qos'] = _qos_summary(pub_rel, pub_dur)
+                    elif sub_rel:
+                        s['qos'] = _qos_summary(sub_rel, sub_dur)
+                    else:
+                        s['qos'] = '—'
 
                     if s['pubs']:
                         if name not in self._my_subscriptions:
@@ -123,6 +255,7 @@ class SimpleMonitorNode(Node):
                     else:
                         s['rate'] = '0.0'
                         s['delay'] = 'N/A'
+                        s['bw'] = '0 B/s'
                         if name in self._my_subscriptions:
                             self.destroy_subscription(self._my_subscriptions[name])
                             del self._my_subscriptions[name]
@@ -181,6 +314,16 @@ class SimpleMonitorNode(Node):
                     else:
                         s['rate'] = '0.0'
 
+                # bandwidth over the same sample window (v2)
+                sz = s['sizes']
+                if s['rate'] in ('NaN', 'N/A'):
+                    s['bw'] = s['rate']
+                elif len(ts) >= 2 and sz:
+                    dt = ts[-1] - ts[0]
+                    s['bw'] = _human_bw(sum(sz) / dt) if dt > 0 else '0 B/s'
+                else:
+                    s['bw'] = '0 B/s'
+
                 ds = s['delays']
                 if ds:
                     avg_delay = sum(ds) / len(ds)
@@ -202,6 +345,14 @@ def _rate_color(rate):
 
 
 def main():
+    parser = argparse.ArgumentParser(description='RUBI - ROS Utility Board Interface')
+    parser.add_argument('--rules', default='rubi_rules.yaml',
+                        help='YAML health-watchdog rules (default: ./rubi_rules.yaml if present)')
+    args, _ = parser.parse_known_args()
+    rules = load_rules(args.rules)
+    if rules:
+        print(f"[RUBI] Loaded {len(rules)} health rule(s) from {args.rules}")
+
     rclpy.init()
     node = SimpleMonitorNode()
 
@@ -285,7 +436,8 @@ def main():
 
     TABLE_DEFS = [
         ("topics_tbl",
-         ["Topic", "Type", "Rate (Hz)", "Delay (s)", "Publisher Nodes", "Subscriber Nodes"]),
+         ["Topic", "Type", "Rate (Hz)", "Bandwidth", "Delay (s)", "QoS", "Health",
+          "Publisher Nodes", "Subscriber Nodes"]),
         ("services_tbl", ["Service", "Type", "Node"]),
         ("actions_tbl", ["Action", "Type", "Server Nodes"]),
         ("nodes_tbl", ["Node"]),
@@ -321,14 +473,17 @@ def main():
 
         # ---- Legend (colors match the table cells exactly) ------------------
         with dpg.child_window(height=46, border=True):
-            with dpg.group(horizontal=True, horizontal_spacing=24):
+            with dpg.group(horizontal=True, horizontal_spacing=20):
                 dpg.add_text("Legend:", color=(200, 200, 200))
                 dpg.add_text("< 1 Hz", color=C_LOW)
                 dpg.add_text("1 - 10 Hz", color=C_MID)
                 dpg.add_text("> 10 Hz", color=C_HIGH)
                 dpg.add_text("|", color=(90, 95, 105))
-                dpg.add_text("NaN = no data yet", color=C_MUTED)
-                dpg.add_text("0.0 = no messages", color=C_MUTED)
+                dpg.add_text("⚠ QoS mismatch", color=C_LOW)
+                dpg.add_text("✓ / ✗ = health", color=C_MUTED)
+                dpg.add_text("|", color=(90, 95, 105))
+                dpg.add_text("NaN = no data", color=C_MUTED)
+                dpg.add_text("0.0 = no msgs", color=C_MUTED)
                 dpg.add_text("None = no nodes", color=C_MUTED)
 
         dpg.add_spacer(height=6)
@@ -367,8 +522,7 @@ def main():
                 for ci, (text, color) in enumerate(cells):
                     cell_tag = f"{prefix}|{key}|{ci}"
                     dpg.set_value(cell_tag, text)
-                    if color is not None:
-                        dpg.configure_item(cell_tag, color=color)
+                    dpg.configure_item(cell_tag, color=color or C_TEXT)
             return
 
         y = dpg.get_y_scroll(tag) if dpg.does_item_exist(tag) else 0.0
@@ -377,10 +531,7 @@ def main():
         for key, cells in desired:
             with dpg.table_row(parent=tag):
                 for ci, (text, color) in enumerate(cells):
-                    kw = {'tag': f"{prefix}|{key}|{ci}"}
-                    if color is not None:
-                        kw['color'] = color
-                    dpg.add_text(text, **kw)
+                    dpg.add_text(text, tag=f"{prefix}|{key}|{ci}", color=color or C_TEXT)
         row_index[tag] = keys
         dpg.set_y_scroll(tag, y)
 
@@ -398,6 +549,7 @@ def main():
             with node.lock:
                 snap_topics = {
                     n: {'type': s['type'], 'rate': s['rate'], 'delay': s['delay'],
+                        'bw': s['bw'], 'qos': s['qos'], 'qos_bad': s['qos_bad'],
                         'pubs': list(s['pubs']), 'subs': list(s['subs'])}
                     for n, s in node.topic_stats.items()
                 }
@@ -412,6 +564,8 @@ def main():
                 snap_nodes = list(node.nodes)
 
             topic_rows = []
+            health_fail = 0
+            qos_bad_count = 0
             for name in sorted(snap_topics):
                 s = snap_topics[name]
                 if s['rate'] == 'N/A' and s['delay'] == 'N/A':
@@ -420,11 +574,21 @@ def main():
                     continue
                 pubs = "\n".join(s['pubs']) if s['pubs'] else "None"
                 subs = "\n".join(s['subs']) if s['subs'] else "None"
+                qos_text = (s['qos'] + ' ⚠') if s['qos_bad'] else s['qos']
+                qos_color = C_LOW if s['qos_bad'] else C_MUTED
+                if s['qos_bad']:
+                    qos_bad_count += 1
+                health_label, health_color = topic_health(rules, name, s['rate'], s['delay'])
+                if health_label == '✗ FAIL':
+                    health_fail += 1
                 topic_rows.append((name, [
-                    (name, None),
+                    (name, C_LOW if s['qos_bad'] else None),
                     (s['type'], None),
                     (s['rate'], _rate_color(s['rate'])),
+                    (s['bw'], None),
                     (s['delay'], None),
+                    (qos_text, qos_color),
+                    (health_label, health_color),
                     (pubs, None),
                     (subs, None),
                 ]))
@@ -460,12 +624,19 @@ def main():
             sync_table("actions_tbl", "ac", action_rows)
             sync_table("nodes_tbl", "nd", node_rows)
 
+            alerts = []
+            if qos_bad_count:
+                alerts.append(f"⚠ {qos_bad_count} QoS mismatch(es)")
+            if health_fail:
+                alerts.append(f"✗ {health_fail} health fail(s)")
+            alert_str = ("        " + "   ".join(alerts)) if alerts else ""
             dpg.set_value(
                 "status_text",
                 f"Topics {len(topic_rows)}   ·   Services {len(service_rows)}   ·   "
                 f"Actions {len(action_rows)}   ·   Nodes {len(node_rows)}"
-                f"        Updated {time.strftime('%H:%M:%S')}"
+                f"        Updated {time.strftime('%H:%M:%S')}{alert_str}"
             )
+            dpg.configure_item("status_text", color=C_WARN if alerts else C_MUTED)
 
         dpg.render_dearpygui_frame()
         time.sleep(0.016)  # ~60 FPS for smooth scrolling
