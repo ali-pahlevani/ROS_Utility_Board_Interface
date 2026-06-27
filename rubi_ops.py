@@ -482,6 +482,44 @@ def spark(values, width=14):
 
 
 # ======================================================================
+# Plottable numeric fields (for the live Plot tab)
+# ======================================================================
+def numeric_fields(msg, prefix='', out=None, depth=0):
+    """Return dotted paths of scalar numeric leaf fields in a ROS message.
+
+    Recurses into nested messages; skips strings, arrays and sequences (those
+    aren't single time-series). e.g. nav_msgs/Odometry ->
+    'pose.pose.position.x', 'twist.twist.linear.x', ...
+    """
+    if out is None:
+        out = []
+    if depth > 8:
+        return out
+    try:
+        fields = msg.get_fields_and_field_types()
+    except AttributeError:
+        return out
+    for fname in fields:
+        val = getattr(msg, fname, None)
+        path = f"{prefix}{fname}"
+        if hasattr(val, 'get_fields_and_field_types'):
+            numeric_fields(val, path + '.', out, depth + 1)
+        elif isinstance(val, (int, float)) and not isinstance(val, bool):
+            out.append(path)
+        elif isinstance(val, bool):
+            out.append(path)
+    return out
+
+
+def get_field_value(msg, path):
+    """Resolve a dotted path on a message to a float (raises on failure)."""
+    obj = msg
+    for part in path.split('.'):
+        obj = getattr(obj, part)
+    return float(obj)
+
+
+# ======================================================================
 # Graph snapshot + diff
 # ======================================================================
 def diff_sets(old, new):

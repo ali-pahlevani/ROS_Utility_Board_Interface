@@ -141,6 +141,11 @@ class SimpleMonitorNode(Node):
         self.logs = deque(maxlen=2000)
         self.tf_frames = {}      # child -> {'parent', 'ts': deque, 'static': bool}
 
+        # live plotting: requested (topic -> set of field paths) and the
+        # collected time series ((topic, field) -> deque of (t, value))
+        self.plot_requests = {}
+        self.plot_series = {}
+
         self._my_subscriptions = {}
         self.msg_classes = {}
 
@@ -180,6 +185,16 @@ class SimpleMonitorNode(Node):
                 stats['timestamps'].append(now)
                 stats['sizes'].append(nbytes)
                 stats['last_msg'] = msg
+                reqs = self.plot_requests.get(topic)
+                if reqs:
+                    for fpath in reqs:
+                        try:
+                            v = ops.get_field_value(msg, fpath)
+                        except Exception:
+                            continue
+                        dq = self.plot_series.get((topic, fpath))
+                        if dq is not None:
+                            dq.append((now, v))
                 if hasattr(msg, 'header') and hasattr(msg.header, 'stamp'):
                     stamp = msg.header.stamp
                     stamp_sec = stamp.sec + stamp.nanosec * 1e-9
@@ -211,6 +226,21 @@ class SimpleMonitorNode(Node):
             self.proc_mon.scan(list(self.nodes))
         except Exception:
             pass
+
+    def add_plot_field(self, topic, fpath):
+        with self.lock:
+            self.plot_requests.setdefault(topic, set()).add(fpath)
+            if (topic, fpath) not in self.plot_series:
+                self.plot_series[(topic, fpath)] = deque(maxlen=6000)
+
+    def remove_plot_field(self, topic, fpath):
+        with self.lock:
+            reqs = self.plot_requests.get(topic)
+            if reqs:
+                reqs.discard(fpath)
+                if not reqs:
+                    del self.plot_requests[topic]
+            self.plot_series.pop((topic, fpath), None)
 
     # ---- periodic graph discovery ----
     def _update_graph(self):
@@ -442,7 +472,8 @@ def main():
                 pass
 
     _build_theme()
-    state = {'snapshot': None, 'param_types': {}, 'services': {}, 'actions': {}}
+    state = {'snapshot': None, 'param_types': {}, 'services': {}, 'actions': {},
+             'plot_lines': {}}
 
     # ---------------------------------------------------------------- helpers
     def run_async(fn):
@@ -715,6 +746,90 @@ def main():
         dpg.set_value("bag_info_output", "Loading ...")
         run_async(lambda: dpg.set_value("bag_info_output", ops.bag_info(path)))
 
+    # ---- live plot ----
+    def add_plot_line(key):
+        topic, fpath = key
+        tag = f"series|{topic}|{fpath}"
+        if not dpg.does_item_exist(tag):
+            dpg.add_line_series([], [], label=f"{topic} : {fpath}",
+                                parent="plot_y", tag=tag)
+        state['plot_lines'][key] = tag
+
+    def remove_plot_line(key):
+        tag = state['plot_lines'].pop(key, None)
+        if tag and dpg.does_item_exist(tag):
+            dpg.delete_item(tag)
+
+    def on_field_toggle(sender, value, user_data):
+        topic, fpath = user_data
+        if value:
+            node.add_plot_field(topic, fpath)
+            add_plot_line((topic, fpath))
+        else:
+            node.remove_plot_field(topic, fpath)
+            remove_plot_line((topic, fpath))
+
+    def load_plot_fields(*_):
+        topic = dpg.get_value("plot_topic")
+        for child in (dpg.get_item_children("plot_fields", 1) or []):
+            dpg.delete_item(child)
+        if not topic:
+            return
+        with node.lock:
+            s = node.topic_stats.get(topic)
+            msg = s['last_msg'] if s else None
+            cls = node.msg_classes.get(topic)
+        if msg is None and cls is not None:
+            try:
+                msg = cls()
+            except Exception:
+                msg = None
+        fields = ops.numeric_fields(msg) if msg is not None else []
+        if not fields:
+            dpg.add_text("(no numeric fields / no data yet)",
+                         parent="plot_fields", color=C_MUTED)
+            return
+        for fpath in fields:
+            key = (topic, fpath)
+            dpg.add_checkbox(label=fpath, parent="plot_fields",
+                             default_value=key in state['plot_lines'],
+                             callback=on_field_toggle, user_data=key)
+
+    def clear_plot():
+        for key in list(state['plot_lines']):
+            node.remove_plot_field(*key)
+            remove_plot_line(key)
+        load_plot_fields()
+
+    def on_plot_follow(sender, value):
+        if not value:
+            dpg.set_axis_limits_auto("plot_x")
+
+    def update_plot():
+        if not state['plot_lines']:
+            return
+        now = time.time()
+        try:
+            window = max(1.0, float(dpg.get_value("plot_window")))
+        except (ValueError, TypeError):
+            window = 20.0
+        with node.lock:
+            data = {k: list(node.plot_series[k]) for k in state['plot_lines']
+                    if k in node.plot_series}
+        for key, tag in state['plot_lines'].items():
+            xs, ys = [], []
+            for t, v in data.get(key, []):
+                dt = t - now
+                if dt >= -window:
+                    xs.append(dt)
+                    ys.append(v)
+            if dpg.does_item_exist(tag):
+                dpg.set_value(tag, [xs, ys])
+        if dpg.get_value("plot_follow"):
+            dpg.set_axis_limits("plot_x", -window, 0.5)
+        if dpg.get_value("plot_auto_y"):
+            dpg.fit_axis_data("plot_y")
+
     # ---------------------------------------------------------------- layout
     state['danger_theme'] = _danger_theme()
     frozen = [False]
@@ -929,6 +1044,27 @@ def main():
                 with dpg.child_window(height=-1, border=True):
                     dpg.add_text("(no snapshot yet)", tag="snap_output", wrap=0)
 
+            with dpg.tab(label="Plot"):
+                with dpg.group(horizontal=True):
+                    dpg.add_text("Topic:")
+                    dpg.add_combo([], tag="plot_topic", width=420, callback=load_plot_fields)
+                    dpg.add_text("Window (s):")
+                    dpg.add_input_text(tag="plot_window", width=70, default_value="20")
+                    dpg.add_checkbox(label="follow", tag="plot_follow",
+                                     default_value=True, callback=on_plot_follow)
+                    dpg.add_checkbox(label="auto-Y", tag="plot_auto_y", default_value=True)
+                    dpg.add_button(label="Clear all", callback=clear_plot)
+                dpg.add_spacer(height=6)
+                with dpg.group(horizontal=True):
+                    with dpg.child_window(width=320, height=-1, border=True):
+                        dpg.add_text("Numeric fields  (tick to plot)", color=C_MUTED)
+                        dpg.add_separator()
+                        dpg.add_group(tag="plot_fields")
+                    with dpg.plot(label="Live plot", height=-1, width=-1, tag="live_plot"):
+                        dpg.add_plot_legend()
+                        dpg.add_plot_axis(dpg.mvXAxis, label="time (s, 0 = now)", tag="plot_x")
+                        dpg.add_plot_axis(dpg.mvYAxis, label="value", tag="plot_y")
+
     if os.environ.get('RUBI_SELFTEST'):
         print('[selftest] full UI tree built without error')
         shutdown()
@@ -1027,6 +1163,7 @@ def main():
 
             # combos / caller registries
             dpg.configure_item("inspect_topic", items=sorted(snap_topics))
+            dpg.configure_item("plot_topic", items=sorted(snap_topics))
             dpg.configure_item("param_node", items=snap_nodes)
             state['services'] = {n: snap_services[n]['type'] for n in snap_services}
             state['actions'] = {n: snap_actions[n]['type'] for n in snap_actions}
@@ -1049,6 +1186,10 @@ def main():
                           f"Actions {len(action_rows)}   ·   Nodes {len(node_rows)}   ·   "
                           f"TF {len(tf_rows)}        Updated {time.strftime('%H:%M:%S')}{alert_str}")
             dpg.configure_item("status_text", color=C_WARN if alerts else C_MUTED)
+
+        # the live plot updates every frame (data is collected at message rate)
+        if not frozen[0]:
+            update_plot()
 
         dpg.render_dearpygui_frame()
         time.sleep(0.016)
