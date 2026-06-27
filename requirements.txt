@@ -1,0 +1,3 @@
+dearpygui>=1.10
+pyyaml>=5.0
+psutil>=5.0

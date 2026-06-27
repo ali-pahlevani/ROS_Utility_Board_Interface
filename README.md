@@ -1,52 +1,72 @@
 # RUBI (ROS_Utility_Board_Interface)
-**RUBI**: A clean ROS 2 utility board showing live topic rates/delays, pub/sub nodes, services, actions, and system overview.
+**RUBI v2**: A single-window ROS 2 *control board* — not just a monitor. Live topic rates/bandwidth/delays, QoS mismatch detection, a health watchdog, message inspection, logs, parameters, lifecycle control, TF health, a service/action caller, bag recording, graph snapshot/diff, and exports.
 
 ![RUBI Banner](https://github.com/user-attachments/assets/b971837f-8fa6-4d51-ab8a-e1d1a6dbc03c)
 
 
 ### What is RUBI?
 
-**RUBI** gives you a single, clean window to understand your ROS 2 robot at a glance:
-
-- Live topic publication rates, **bandwidth (B/s)**, & delays
-- **QoS introspection with automatic mismatch detection** (the #1 cause of silent "no data")
-- **Health watchdog** — turn topics red when their rate/delay leaves your expected bounds
-- Publisher & subscriber nodes per topic
-- All services with their server nodes
-- All actions with their server nodes
-- Full node list
-- Global search across everything
-- Freeze / Unfreeze updates
-
-No heavy dependencies. Runs fast even on embedded systems.
+**RUBI** gives you a single, clean window to understand *and operate* your ROS 2 robot at a glance — no web server, no heavy stack. Runs fast even on embedded systems.
 
 ### Features
 
-- **Realtime monitoring** — rates, bandwidth & delays updated continuously from actual subscriptions
-- **QoS mismatch detector** 🆕 — shows each topic's QoS and flags incompatible publisher/subscriber pairs (reliability & durability) right in the table
-- **Live bandwidth** 🆕 — per-topic throughput in human-readable B/s, like `ros2 topic bw` but for everything at once
-- **Health watchdog** 🆕 — define expected `min_hz` / `max_hz` / `max_delay` per topic (YAML, glob patterns supported) and get instant ✓/✗ status plus an alert banner
-- **Flicker-free UI** — tables update in place; smooth 60 FPS rendering, preserved scroll
-- **Multi-tab interface** — Topics / Services / Actions / Nodes
-- **Freeze mode** — stop updates to read long node lists
-- **Beautiful & minimal** — Dear PyGui + clean dark theme
+**Observe**
+- **Realtime monitoring** — topic rates, delays, and a per-topic **rate sparkline** (trend) updated continuously
+- **Live bandwidth** — per-topic throughput in human-readable B/s, like `ros2 topic bw` but for everything at once
+- **QoS mismatch detector** — shows each topic's QoS and flags incompatible publisher/subscriber pairs (reliability & durability) right in the table — the #1 cause of silent "no data"
+- **Health watchdog** — expected `min_hz` / `max_hz` / `max_delay` per topic (YAML + glob patterns) → instant ✓/✗ status and an alert banner
+- **Message inspector** — peek the latest message of any topic as YAML (with a *live* toggle)
+- **/rosout log pane** — severity-filtered, color-coded, searchable
+- **Node process metrics** — best-effort PID / CPU% / memory per node (psutil)
+- **TF health** — frame tree (child → parent), per-frame rate, and **stale-transform** detection
+- **Lifecycle states** — detects lifecycle nodes and shows their current state
+
+**Operate**
+- **Parameter browser & live edit** — list and set parameters on any node
+- **Lifecycle control** — trigger configure / activate / deactivate / cleanup / shutdown
+- **Service & Action caller** — call any service or send any action goal from a YAML request form
+- **One-click bag recording** — start/stop `ros2 bag record` (all topics or a selection)
+
+**Analyze & share**
+- **Graph snapshot & diff** — capture the graph and diff later to catch intermittent nodes/topics
+- **Export** — current topic table to CSV / Markdown, or the node graph to Graphviz `.dot`
+- **Multi-domain** — switch `ROS_DOMAIN_ID` from the header (relaunches on the chosen domain)
+
+**Polish**
+- Flicker-free tables (in-place updates, preserved scroll), 60 FPS, clean dark theme, global search, freeze mode.
 
 ### Installation
+
+RUBI works either as a plain script or as a proper ROS 2 package.
 
 ```bash
 # 1. Source ROS 2
 source /opt/ros/humble/setup.bash   # or iron, jazzy, etc.
 
-# 2. Install dependencies
-pip install dearpygui pyyaml
+# 2. Install the Python deps not provided by ROS
+pip install dearpygui pyyaml psutil
+```
 
-# 3. Clone & run
+**Option A — run directly:**
+```bash
 git clone https://github.com/ali-pahlevani/ROS_Utility_Board_Interface.git
 cd ROS_Utility_Board_Interface
-python3 rubi.py
+python3 rubi.py                       # or: python3 rubi.py --rules rubi_rules.yaml --domain 0
+```
 
-# Optional: enable the health watchdog with custom rules
-python3 rubi.py --rules rubi_rules.yaml
+**Option B — build as a ROS 2 package (`ros2 run`):**
+```bash
+mkdir -p ~/ros2_ws/src && cd ~/ros2_ws/src
+git clone https://github.com/ali-pahlevani/ROS_Utility_Board_Interface.git
+cd ~/ros2_ws && colcon build --packages-select ros_utility_board_interface
+source install/setup.bash
+ros2 run ros_utility_board_interface rubi
+```
+
+**Option C — pip install (provides a `rubi` command):**
+```bash
+pip install .
+rubi
 ```
 
 ### Health watchdog rules
