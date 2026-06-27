@@ -35,14 +35,20 @@ C_OK = (107, 222, 107)
 # ======================================================================
 # QoS helpers (mismatch detection)
 # ======================================================================
+# Map by the enum member *name* so it works across distros (humble/jazzy),
+# including policies like BEST_AVAILABLE that only exist on newer releases.
+_REL_CODES = {'RELIABLE': 'R', 'BEST_EFFORT': 'BE',
+              'BEST_AVAILABLE': 'BA', 'SYSTEM_DEFAULT': 'SD', 'UNKNOWN': '?'}
+_DUR_CODES = {'VOLATILE': 'V', 'TRANSIENT_LOCAL': 'TL',
+              'BEST_AVAILABLE': 'BA', 'SYSTEM_DEFAULT': 'SD', 'UNKNOWN': '?'}
+
+
 def rel_code(r):
-    return {QoSReliabilityPolicy.RELIABLE: 'R',
-            QoSReliabilityPolicy.BEST_EFFORT: 'BE'}.get(r, '?')
+    return _REL_CODES.get(getattr(r, 'name', str(r)), '?')
 
 
 def dur_code(d):
-    return {QoSDurabilityPolicy.VOLATILE: 'V',
-            QoSDurabilityPolicy.TRANSIENT_LOCAL: 'TL'}.get(d, '?')
+    return _DUR_CODES.get(getattr(d, 'name', str(d)), '?')
 
 
 def qos_summary(rel_set, dur_set):
@@ -168,6 +174,21 @@ def _await_service(ex, cli, timeout):
 def _await_future(ex, future, timeout):
     ex.spin_until_future_complete(future, timeout_sec=timeout)
     return future.result() if future.done() else None
+
+
+def request_skeleton(type_str, is_action):
+    """Return an editable YAML skeleton (all fields with default values) for a
+    service Request or an action Goal, to pre-fill the caller form."""
+    try:
+        if is_action:
+            from rosidl_runtime_py.utilities import get_action
+            obj = get_action(type_str).Goal()
+        else:
+            obj = get_service(type_str).Request()
+        text = message_to_yaml(obj).strip()
+        return '' if text in ('', '{}', 'null') else text
+    except Exception:
+        return ''
 
 
 def call_service(type_str, name, request_yaml='', timeout=5.0):
@@ -472,8 +493,14 @@ def diff_sets(old, new):
 # ======================================================================
 # Exporters
 # ======================================================================
+def _ensure_parent(path):
+    parent = os.path.dirname(os.path.abspath(path))
+    os.makedirs(parent, exist_ok=True)
+
+
 def export_topics_csv(path, rows):
     """rows: list of dicts with keys name,type,rate,bw,delay,qos,pubs,subs."""
+    _ensure_parent(path)
     with open(path, 'w', newline='') as f:
         w = csv.writer(f)
         w.writerow(['Topic', 'Type', 'Rate(Hz)', 'Bandwidth', 'Delay(s)', 'QoS',
@@ -485,6 +512,7 @@ def export_topics_csv(path, rows):
 
 
 def export_topics_markdown(path, rows):
+    _ensure_parent(path)
     lines = ['| Topic | Type | Rate (Hz) | Bandwidth | Delay (s) | QoS | Publishers | Subscribers |',
              '|---|---|---|---|---|---|---|---|']
     for r in rows:
@@ -498,6 +526,7 @@ def export_topics_markdown(path, rows):
 
 def export_graph_dot(path, rows):
     """Graphviz dot of the node<->topic graph (pub: node->topic, sub: topic->node)."""
+    _ensure_parent(path)
     lines = ['digraph rubi {', '  rankdir=LR;',
              '  node [style=filled];']
     nodes, topics = set(), set()
@@ -525,8 +554,40 @@ def export_graph_dot(path, rows):
 
 
 # ======================================================================
-# Bag recording
+# Bag recording / playback
 # ======================================================================
+BAG_DIR = 'Bag'
+
+
+def list_bags(base=BAG_DIR):
+    """Return paths of rosbag2 directories under the Bag folder."""
+    if not os.path.isdir(base):
+        return []
+    out = []
+    for entry in sorted(os.listdir(base)):
+        p = os.path.join(base, entry)
+        if os.path.isdir(p) and os.path.isfile(os.path.join(p, 'metadata.yaml')):
+            out.append(p)
+    return out
+
+
+def bag_info(path):
+    """Return the text of `ros2 bag info <path>`."""
+    path = (path or '').strip()
+    if not path:
+        return "Provide a bag path."
+    if not os.path.exists(path):
+        return f"path not found: {path}"
+    try:
+        r = subprocess.run(['ros2', 'bag', 'info', path],
+                           capture_output=True, text=True, timeout=20)
+        return r.stdout or r.stderr or "(no output)"
+    except FileNotFoundError:
+        return "ros2 CLI not found on PATH"
+    except Exception as e:
+        return f"failed: {e}"
+
+
 class BagRecorder:
     def __init__(self):
         self.proc = None
@@ -539,18 +600,17 @@ class BagRecorder:
     def start(self, topics_text, out_dir=''):
         if self.recording:
             return False, "already recording"
+        os.makedirs(BAG_DIR, exist_ok=True)
         cmd = ['ros2', 'bag', 'record']
         topics_text = (topics_text or '').strip()
         if not topics_text or topics_text in ('-a', 'all', '*'):
             cmd.append('-a')
         else:
             cmd += topics_text.split()
-        if out_dir.strip():
-            cmd += ['-o', out_dir.strip()]
-            self.output = out_dir.strip()
-        else:
-            self.output = 'rosbag2_' + time.strftime('%Y_%m_%d-%H_%M_%S')
-            cmd += ['-o', self.output]
+        name = out_dir.strip() or ('rosbag2_' + time.strftime('%Y_%m_%d-%H_%M_%S'))
+        # keep all recordings inside the Bag/ folder unless an absolute path is given
+        self.output = name if os.path.isabs(name) else os.path.join(BAG_DIR, name)
+        cmd += ['-o', self.output]
         try:
             self.proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
                                          stderr=subprocess.DEVNULL)
@@ -570,3 +630,47 @@ class BagRecorder:
         out = self.output
         self.proc = None
         return True, f"saved {out}"
+
+
+class BagPlayer:
+    def __init__(self):
+        self.proc = None
+        self.path = None
+
+    @property
+    def playing(self):
+        return self.proc is not None and self.proc.poll() is None
+
+    def start(self, path, rate='1.0', loop=False):
+        if self.playing:
+            return False, "already playing"
+        path = (path or '').strip()
+        if not path or not os.path.exists(path):
+            return False, f"bag not found: {path}"
+        cmd = ['ros2', 'bag', 'play', path]
+        try:
+            if rate and float(rate) > 0:
+                cmd += ['--rate', str(float(rate))]
+        except (ValueError, TypeError):
+            pass
+        if loop:
+            cmd.append('--loop')
+        try:
+            self.proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
+                                         stderr=subprocess.DEVNULL)
+        except FileNotFoundError:
+            return False, "ros2 CLI not found on PATH"
+        self.path = path
+        return True, f"playing {path}"
+
+    def stop(self):
+        if not self.playing:
+            return False, "not playing"
+        import signal
+        self.proc.send_signal(signal.SIGINT)
+        try:
+            self.proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            self.proc.kill()
+        self.proc = None
+        return True, "playback stopped"

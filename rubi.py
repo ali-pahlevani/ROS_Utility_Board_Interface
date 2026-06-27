@@ -417,14 +417,32 @@ def main():
 
     dpg.create_context()
 
+    # Load a Unicode-capable font AND the glyph ranges RUBI actually uses
+    # (em dash, ✓/✗, ⚠, ● ❚, and the ▁▂▃ sparkline blocks). Without these
+    # ranges Dear PyGui only loads basic Latin and renders everything else
+    # as '?'.
+    font_candidates = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+        "/usr/share/fonts/TTF/DejaVuSans.ttf",
+        "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+    ]
     with dpg.font_registry():
-        try:
-            dpg.bind_font(dpg.add_font("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 20))
-        except Exception:
-            pass
+        for path in font_candidates:
+            if not os.path.isfile(path):
+                continue
+            try:
+                with dpg.font(path, 20) as ft:
+                    dpg.add_font_range_hint(dpg.mvFontRangeHint_Default)
+                    dpg.add_font_range(0x2010, 0x2060)   # punctuation incl. em dash
+                    dpg.add_font_range(0x2500, 0x27BF)   # blocks, shapes, symbols, dingbats
+                dpg.bind_font(ft)
+                break
+            except Exception:
+                pass
 
     _build_theme()
-    state = {'snapshot': None}
+    state = {'snapshot': None, 'param_types': {}, 'services': {}, 'actions': {}}
 
     # ---------------------------------------------------------------- helpers
     def run_async(fn):
@@ -464,11 +482,11 @@ def main():
         stamp = time.strftime('%Y%m%d_%H%M%S')
         try:
             if kind == 'csv':
-                p = ops.export_topics_csv(f'rubi_topics_{stamp}.csv', rows)
+                p = ops.export_topics_csv(os.path.join('CSV', f'rubi_topics_{stamp}.csv'), rows)
             elif kind == 'md':
-                p = ops.export_topics_markdown(f'rubi_topics_{stamp}.md', rows)
+                p = ops.export_topics_markdown(os.path.join('MD', f'rubi_topics_{stamp}.md'), rows)
             else:
-                p = ops.export_graph_dot(f'rubi_graph_{stamp}.dot', rows)
+                p = ops.export_graph_dot(os.path.join('DOT', f'rubi_graph_{stamp}.dot'), rows)
             dpg.set_value("status_text", f"Exported {os.path.abspath(p)}")
             dpg.configure_item("status_text", color=C_OK)
         except Exception as e:
@@ -527,6 +545,11 @@ def main():
             dpg.set_value("inspect_output", f"(error: {e})")
 
     # ---- parameters ----
+    def on_param_select():
+        name = dpg.get_value("param_name")
+        t = state['param_types'].get(name, '')
+        dpg.configure_item("param_value", hint=f"new value ...({t})" if t else "new value")
+
     def load_params():
         n = dpg.get_value("param_node")
         if not n:
@@ -542,16 +565,21 @@ def main():
                     dpg.add_text(pname)
                     dpg.add_text(ptype, color=C_MUTED)
                     dpg.add_text(pval, color=C_ACCENT)
+            names = [p[0] for p in params]
+            state['param_types'] = {p[0]: p[1] for p in params}
+            dpg.configure_item("param_name", items=names)
+            dpg.set_value("param_name", names[0] if names else "")
+            on_param_select()
             dpg.set_value("param_status",
                           f"{len(params)} parameter(s)" if params else "no parameters / unreachable")
         run_async(work)
 
     def set_param():
         n = dpg.get_value("param_node")
-        name = dpg.get_value("param_name").strip()
+        name = (dpg.get_value("param_name") or "").strip()
         val = dpg.get_value("param_value")
         if not n or not name:
-            dpg.set_value("param_status", "Pick a node and parameter name")
+            dpg.set_value("param_status", "Pick a node and a parameter")
             return
 
         def work():
@@ -603,13 +631,31 @@ def main():
         run_async(work)
 
     # ---- service / action caller ----
+    def on_call_mode():
+        """Repopulate the name dropdown when Service/Action is toggled."""
+        is_action = dpg.get_value("call_mode") == "Action"
+        names = sorted(state['actions'] if is_action else state['services'])
+        dpg.configure_item("call_name", items=names)
+        dpg.set_value("call_name", "")
+        dpg.set_value("call_type_display", "(select a name)")
+        dpg.set_value("call_request", "")
+
+    def on_call_name():
+        is_action = dpg.get_value("call_mode") == "Action"
+        name = dpg.get_value("call_name")
+        registry = state['actions'] if is_action else state['services']
+        type_str = registry.get(name, '')
+        dpg.set_value("call_type_display", f"type: {type_str}" if type_str else "")
+        dpg.set_value("call_request", ops.request_skeleton(type_str, is_action))
+
     def do_call():
         is_action = dpg.get_value("call_mode") == "Action"
-        type_str = dpg.get_value("call_type").strip()
-        name = dpg.get_value("call_name").strip()
+        name = dpg.get_value("call_name")
+        registry = state['actions'] if is_action else state['services']
+        type_str = registry.get(name, '')
         req = dpg.get_value("call_request")
-        if not type_str or not name:
-            dpg.set_value("call_output", "Provide a type and a name.")
+        if not name or not type_str:
+            dpg.set_value("call_output", "Select a service/action from the list.")
             return
         dpg.set_value("call_output", "Calling ...")
 
@@ -622,14 +668,16 @@ def main():
             dpg.configure_item("call_output", color=C_OK if ok else C_LOW)
         run_async(work)
 
-    # ---- bag recorder ----
+    # ---- rosbag record / play / info ----
     recorder = ops.BagRecorder()
+    player = ops.BagPlayer()
 
     def toggle_record():
         if recorder.recording:
             ok, msg = recorder.stop()
             dpg.configure_item("record_btn", label="Start Recording")
             dpg.bind_item_theme("record_btn", 0)
+            refresh_bag_list()
         else:
             ok, msg = recorder.start(dpg.get_value("rec_topics"), dpg.get_value("rec_outdir"))
             if ok:
@@ -637,6 +685,35 @@ def main():
                 dpg.bind_item_theme("record_btn", state['danger_theme'])
         dpg.set_value("record_status", ("✓ " if ok else "✗ ") + msg)
         dpg.configure_item("record_status", color=C_OK if ok else C_LOW)
+
+    def toggle_play():
+        if player.playing:
+            ok, msg = player.stop()
+            dpg.configure_item("play_btn", label="Play")
+            dpg.bind_item_theme("play_btn", 0)
+        else:
+            ok, msg = player.start(dpg.get_value("play_path"),
+                                   dpg.get_value("play_rate"), dpg.get_value("play_loop"))
+            if ok:
+                dpg.configure_item("play_btn", label="Stop")
+                dpg.bind_item_theme("play_btn", state['danger_theme'])
+        dpg.set_value("play_status", ("✓ " if ok else "✗ ") + msg)
+        dpg.configure_item("play_status", color=C_OK if ok else C_LOW)
+
+    def refresh_bag_list():
+        bags = ops.list_bags()
+        dpg.configure_item("bag_select", items=bags)
+        dpg.set_value("bag_list_status", f"{len(bags)} bag(s) in {ops.BAG_DIR}/")
+
+    def on_bag_select():
+        p = dpg.get_value("bag_select")
+        dpg.set_value("play_path", p)
+        dpg.set_value("info_path", p)
+
+    def show_bag_info():
+        path = dpg.get_value("info_path")
+        dpg.set_value("bag_info_output", "Loading ...")
+        run_async(lambda: dpg.set_value("bag_info_output", ops.bag_info(path)))
 
     # ---------------------------------------------------------------- layout
     state['danger_theme'] = _danger_theme()
@@ -739,14 +816,14 @@ def main():
             with dpg.tab(label="Params"):
                 with dpg.group(horizontal=True):
                     dpg.add_text("Node:")
-                    dpg.add_combo([], tag="param_node", width=400)
-                    dpg.add_button(label="Load", callback=load_params)
+                    dpg.add_combo([], tag="param_node", width=400, callback=load_params)
+                    dpg.add_button(label="Reload", callback=load_params)
                     dpg.add_text("", tag="param_status", color=C_MUTED)
                 dpg.add_spacer(height=4)
                 with dpg.group(horizontal=True):
                     dpg.add_text("Set:")
-                    dpg.add_input_text(tag="param_name", hint="param name", width=260)
-                    dpg.add_input_text(tag="param_value", hint="new value", width=260)
+                    dpg.add_combo([], tag="param_name", width=260, callback=on_param_select)
+                    dpg.add_input_text(tag="param_value", hint="new value", width=300)
                     dpg.add_button(label="Apply", callback=set_param)
                 dpg.add_spacer(height=6)
                 with dpg.table(tag="params_tbl", header_row=True, borders_innerH=True,
@@ -776,29 +853,60 @@ def main():
             with dpg.tab(label="Call"):
                 with dpg.group(horizontal=True):
                     dpg.add_radio_button(["Service", "Action"], tag="call_mode",
-                                         horizontal=True, default_value="Service")
-                dpg.add_input_text(tag="call_type", width=-1,
-                                   hint="type, e.g. std_srvs/srv/SetBool or example_interfaces/action/Fibonacci")
-                dpg.add_input_text(tag="call_name", width=-1, hint="name, e.g. /set_bool or /fibonacci")
-                dpg.add_text("Request / Goal (YAML):", color=C_MUTED)
-                dpg.add_input_text(tag="call_request", multiline=True, width=-1, height=120,
-                                   hint="data: true")
+                                         horizontal=True, default_value="Service",
+                                         callback=on_call_mode)
+                with dpg.group(horizontal=True):
+                    dpg.add_text("Name:")
+                    dpg.add_combo([], tag="call_name", width=560, callback=on_call_name)
+                dpg.add_text("(select a name)", tag="call_type_display", color=C_ACCENT)
+                dpg.add_spacer(height=4)
+                dpg.add_text("Request / Goal (YAML) — pre-filled from the type, edit as needed:",
+                             color=C_MUTED)
+                dpg.add_input_text(tag="call_request", multiline=True, width=-1, height=140)
                 dpg.add_button(label="Call", callback=do_call)
                 dpg.add_spacer(height=6)
                 with dpg.child_window(height=-1, border=True):
                     dpg.add_text("(response appears here)", tag="call_output", wrap=0)
 
-            with dpg.tab(label="Record"):
-                dpg.add_text("Record a rosbag2 of selected topics.", color=C_MUTED)
+            with dpg.tab(label="Rosbag"):
+                dpg.add_text("Record, play and inspect rosbag2 files. "
+                             "All recordings are saved under the Bag/ folder.", color=C_MUTED)
                 dpg.add_spacer(height=6)
-                dpg.add_input_text(tag="rec_topics", width=-1, default_value="-a",
-                                   hint="-a for all, or space-separated topic names")
-                dpg.add_input_text(tag="rec_outdir", width=-1,
-                                   hint="output dir (optional, default rosbag2_<timestamp>)")
+
+                with dpg.collapsing_header(label="Record", default_open=True):
+                    dpg.add_input_text(tag="rec_topics", width=-1, default_value="-a",
+                                       hint="-a for all, or space-separated topic names")
+                    dpg.add_input_text(tag="rec_outdir", width=-1,
+                                       hint="bag name (optional, saved under Bag/)")
+                    dpg.add_spacer(height=4)
+                    dpg.add_button(label="Start Recording", tag="record_btn",
+                                   callback=toggle_record, width=200)
+                    dpg.add_text("", tag="record_status", color=C_MUTED)
+
                 dpg.add_spacer(height=6)
-                dpg.add_button(label="Start Recording", tag="record_btn", callback=toggle_record, width=200)
-                dpg.add_spacer(height=6)
-                dpg.add_text("", tag="record_status", color=C_MUTED)
+                with dpg.group(horizontal=True):
+                    dpg.add_text("Detected bags:")
+                    dpg.add_combo([], tag="bag_select", width=420, callback=on_bag_select)
+                    dpg.add_button(label="Refresh", callback=refresh_bag_list)
+                    dpg.add_text("", tag="bag_list_status", color=C_MUTED)
+
+                with dpg.collapsing_header(label="Play", default_open=True):
+                    dpg.add_input_text(tag="play_path", width=-1,
+                                       hint="bag path (pick from Detected bags or type a path)")
+                    with dpg.group(horizontal=True):
+                        dpg.add_text("Rate:")
+                        dpg.add_input_text(tag="play_rate", width=80, default_value="1.0")
+                        dpg.add_checkbox(label="loop", tag="play_loop")
+                        dpg.add_button(label="Play", tag="play_btn", callback=toggle_play, width=120)
+                    dpg.add_text("", tag="play_status", color=C_MUTED)
+
+                with dpg.collapsing_header(label="Info", default_open=True):
+                    with dpg.group(horizontal=True):
+                        dpg.add_input_text(tag="info_path", width=-1,
+                                           hint="bag path for `ros2 bag info`")
+                        dpg.add_button(label="Get info", callback=show_bag_info)
+                    with dpg.child_window(height=220, border=True):
+                        dpg.add_text("(bag info appears here)", tag="bag_info_output", wrap=0)
 
             with dpg.tab(label="Snapshot"):
                 dpg.add_text("Capture the current graph, then diff it later to catch "
@@ -823,6 +931,7 @@ def main():
     dpg.set_primary_window("main_window", True)
     dpg.setup_dearpygui()
     dpg.show_viewport()
+    refresh_bag_list()
 
     # ------------------------------------------------------------ live tables
     row_index = {}
@@ -906,9 +1015,15 @@ def main():
             sync_table("tf_tbl", "tf", tf_rows)
             refresh_logs(search)
 
-            # combos
+            # combos / caller registries
             dpg.configure_item("inspect_topic", items=sorted(snap_topics))
             dpg.configure_item("param_node", items=snap_nodes)
+            state['services'] = {n: snap_services[n]['type'] for n in snap_services}
+            state['actions'] = {n: snap_actions[n]['type'] for n in snap_actions}
+            call_is_action = dpg.get_value("call_mode") == "Action"
+            dpg.configure_item(
+                "call_name",
+                items=sorted(state['actions'] if call_is_action else state['services']))
 
             if dpg.get_value("inspect_live"):
                 peek_message()
