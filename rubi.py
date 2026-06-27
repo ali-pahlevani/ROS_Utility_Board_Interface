@@ -1047,7 +1047,8 @@ def main():
             with dpg.tab(label="Plot"):
                 with dpg.group(horizontal=True):
                     dpg.add_text("Topic:")
-                    dpg.add_combo([], tag="plot_topic", width=420, callback=load_plot_fields)
+                    dpg.add_combo([], tag="plot_topic", width=360, callback=load_plot_fields)
+                    dpg.add_button(label="Reload", callback=load_plot_fields)
                     dpg.add_text("Window (s):")
                     dpg.add_input_text(tag="plot_window", width=70, default_value="20")
                     dpg.add_checkbox(label="follow", tag="plot_follow",

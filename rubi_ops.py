@@ -6,6 +6,7 @@ they can be unit-tested headlessly. The Dear PyGui app (rubi.py) imports this.
 """
 
 import os
+import re
 import csv
 import time
 import fnmatch
@@ -484,12 +485,38 @@ def spark(values, width=14):
 # ======================================================================
 # Plottable numeric fields (for the live Plot tab)
 # ======================================================================
-def numeric_fields(msg, prefix='', out=None, depth=0):
-    """Return dotted paths of scalar numeric leaf fields in a ROS message.
+ARRAY_CAP = 64  # max elements enumerated per array level (keeps the list sane)
 
-    Recurses into nested messages; skips strings, arrays and sequences (those
-    aren't single time-series). e.g. nav_msgs/Odometry ->
-    'pose.pose.position.x', 'twist.twist.linear.x', ...
+
+def _expand_field(val, path, out, depth):
+    if depth > 8:
+        return
+    if hasattr(val, 'get_fields_and_field_types'):          # nested message
+        numeric_fields(val, path + '.', out, depth + 1)
+    elif isinstance(val, (int, float)):                     # scalar (incl. bool)
+        out.append(path)
+    elif isinstance(val, (str, bytes)):                     # not plottable
+        return
+    else:                                                   # array / sequence
+        try:
+            n = len(val)
+        except TypeError:
+            return
+        for i in range(min(n, ARRAY_CAP)):
+            try:
+                _expand_field(val[i], f"{path}[{i}]", out, depth + 1)
+            except (IndexError, TypeError, KeyError):
+                break
+
+
+def numeric_fields(msg, prefix='', out=None, depth=0):
+    """Return dotted/indexed paths of scalar numeric leaf fields in a ROS
+    message. Recurses into nested messages AND into numeric arrays/sequences,
+    so e.g. sensor_msgs/JointState -> 'position[0]', 'position[1]', ... and
+    nav_msgs/Odometry -> 'pose.pose.position.x'. Strings/byte-arrays skipped.
+
+    (Array lengths come from the live message, so empty arrays in a freshly
+    constructed message yield no indexed fields until data arrives.)
     """
     if out is None:
         out = []
@@ -500,22 +527,21 @@ def numeric_fields(msg, prefix='', out=None, depth=0):
     except AttributeError:
         return out
     for fname in fields:
-        val = getattr(msg, fname, None)
-        path = f"{prefix}{fname}"
-        if hasattr(val, 'get_fields_and_field_types'):
-            numeric_fields(val, path + '.', out, depth + 1)
-        elif isinstance(val, (int, float)) and not isinstance(val, bool):
-            out.append(path)
-        elif isinstance(val, bool):
-            out.append(path)
+        _expand_field(getattr(msg, fname, None), f"{prefix}{fname}", out, depth)
     return out
 
 
+_TOKEN_IDX = re.compile(r'\[(\d+)\]')
+
+
 def get_field_value(msg, path):
-    """Resolve a dotted path on a message to a float (raises on failure)."""
+    """Resolve a dotted/indexed path to a float (raises on failure). Supports
+    array indices, e.g. 'position[0]' or 'markers[2].pose.position.x'."""
     obj = msg
-    for part in path.split('.'):
-        obj = getattr(obj, part)
+    for tok in path.split('.'):
+        obj = getattr(obj, tok.split('[', 1)[0])
+        for idx in _TOKEN_IDX.findall(tok):
+            obj = obj[int(idx)]
     return float(obj)
 
 
