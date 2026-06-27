@@ -1,8 +1,18 @@
+# Python
 __pycache__/
 *.pyc
-build/
 *.egg-info/
+
+# Build / packaging artifacts
+build/
+dist/
 *.whl
+
+# colcon workspace artifacts (when building in-tree)
+install/
+log/
+
+# RUBI runtime outputs
 CSV/
 MD/
 DOT/
