@@ -8,7 +8,14 @@ import threading
 import time
 import importlib
 from collections import deque
-import os
+
+# ---- Shared color palette (legend and table cells use the SAME constants) ----
+C_LOW = (255, 107, 107)   # rate < 1 Hz
+C_MID = (210, 210, 210)   # 1 Hz <= rate <= 10 Hz
+C_HIGH = (107, 222, 107)  # rate > 10 Hz
+C_MUTED = (170, 170, 180)
+C_ACCENT = (94, 169, 255)
+
 
 class SimpleMonitorNode(Node):
     def __init__(self):
@@ -50,7 +57,7 @@ class SimpleMonitorNode(Node):
         try:
             with self.lock:
                 node_names = self.get_node_names_and_namespaces()
-                self.nodes = sorted([f"{ns}{name}" for name, ns in node_names])
+                self.nodes = sorted({f"{ns}{name}" for name, ns in node_names})
 
                 topic_info = self.get_topic_names_and_types()
                 current_topics = {name for name, _ in topic_info}
@@ -182,41 +189,129 @@ class SimpleMonitorNode(Node):
                     s['delay'] = 'NaN'
 
 
+def _rate_color(rate):
+    try:
+        r = float(rate)
+    except (ValueError, TypeError):
+        return C_MID
+    if r < 1.0:
+        return C_LOW
+    if r > 10.0:
+        return C_HIGH
+    return C_MID
+
+
 def main():
     rclpy.init()
     node = SimpleMonitorNode()
 
+    # ROS spinning lives in exactly ONE place (this daemon thread). The UI loop
+    # never spins the node itself, so the executor is never entered concurrently.
     def spin_thread():
         while rclpy.ok():
-            rclpy.spin_once(node, timeout_sec=0.01)
-            time.sleep(0.005)
+            rclpy.spin_once(node, timeout_sec=0.05)
 
-    spin_thread = threading.Thread(target=spin_thread, daemon=True)
-    spin_thread.start()
+    threading.Thread(target=spin_thread, daemon=True).start()
 
     time.sleep(1.5)
 
     dpg.create_context()
-    dpg.create_viewport(title='RUBI (ROS Utility Board Interface)', width=1450, height=1050, resizable=True)
+    dpg.create_viewport(title='RUBI (ROS Utility Board Interface)',
+                        width=1450, height=1050, min_width=900, min_height=600,
+                        resizable=True)
 
     with dpg.font_registry():
         try:
             font = dpg.add_font("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 20)
             dpg.bind_font(font)
-        except:
+        except Exception:
             pass
+
+    # ---------------------------------------------------------------- theme ---
+    with dpg.theme() as global_theme:
+        with dpg.theme_component(dpg.mvAll):
+            dpg.add_theme_color(dpg.mvThemeCol_WindowBg, (24, 26, 31))
+            dpg.add_theme_color(dpg.mvThemeCol_ChildBg, (31, 34, 41))
+            dpg.add_theme_color(dpg.mvThemeCol_Border, (54, 58, 68))
+            dpg.add_theme_color(dpg.mvThemeCol_Text, (228, 230, 235))
+            dpg.add_theme_color(dpg.mvThemeCol_FrameBg, (40, 44, 53))
+            dpg.add_theme_color(dpg.mvThemeCol_FrameBgHovered, (52, 57, 68))
+            dpg.add_theme_color(dpg.mvThemeCol_FrameBgActive, (60, 66, 78))
+            dpg.add_theme_color(dpg.mvThemeCol_Button, (45, 96, 160))
+            dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered, (58, 120, 196))
+            dpg.add_theme_color(dpg.mvThemeCol_ButtonActive, (38, 82, 140))
+            dpg.add_theme_color(dpg.mvThemeCol_Tab, (38, 42, 51))
+            dpg.add_theme_color(dpg.mvThemeCol_TabHovered, (58, 120, 196))
+            dpg.add_theme_color(dpg.mvThemeCol_TabActive, (45, 96, 160))
+            dpg.add_theme_color(dpg.mvThemeCol_Header, (45, 96, 160))
+            dpg.add_theme_color(dpg.mvThemeCol_HeaderHovered, (58, 120, 196))
+            dpg.add_theme_color(dpg.mvThemeCol_TableHeaderBg, (44, 48, 58))
+            dpg.add_theme_color(dpg.mvThemeCol_TableBorderStrong, (62, 67, 79))
+            dpg.add_theme_color(dpg.mvThemeCol_TableBorderLight, (46, 50, 60))
+            dpg.add_theme_color(dpg.mvThemeCol_TableRowBg, (33, 36, 44))
+            dpg.add_theme_color(dpg.mvThemeCol_TableRowBgAlt, (38, 42, 51))
+            dpg.add_theme_color(dpg.mvThemeCol_ScrollbarBg, (24, 26, 31))
+            dpg.add_theme_color(dpg.mvThemeCol_ScrollbarGrab, (60, 66, 78))
+            dpg.add_theme_style(dpg.mvStyleVar_WindowRounding, 6)
+            dpg.add_theme_style(dpg.mvStyleVar_ChildRounding, 6)
+            dpg.add_theme_style(dpg.mvStyleVar_FrameRounding, 5)
+            dpg.add_theme_style(dpg.mvStyleVar_TabRounding, 5)
+            dpg.add_theme_style(dpg.mvStyleVar_ScrollbarRounding, 6)
+            dpg.add_theme_style(dpg.mvStyleVar_FrameBorderSize, 1)
+            dpg.add_theme_style(dpg.mvStyleVar_CellPadding, 8, 4)
+            dpg.add_theme_style(dpg.mvStyleVar_ItemSpacing, 8, 6)
+            dpg.add_theme_style(dpg.mvStyleVar_WindowPadding, 14, 12)
+    dpg.bind_theme(global_theme)
+
+    # Distinct accent for the freeze button while frozen.
+    with dpg.theme() as frozen_btn_theme:
+        with dpg.theme_component(dpg.mvButton):
+            dpg.add_theme_color(dpg.mvThemeCol_Button, (176, 64, 64))
+            dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered, (200, 84, 84))
+            dpg.add_theme_color(dpg.mvThemeCol_ButtonActive, (150, 52, 52))
 
     frozen = [False]
 
     def toggle_freeze():
         frozen[0] = not frozen[0]
-        new_label = "Unfreeze" if frozen[0] else "Freeze"
-        dpg.configure_item("freeze_button", label=new_label)
+        if frozen[0]:
+            dpg.configure_item("freeze_button", label="Unfreeze")
+            dpg.bind_item_theme("freeze_button", frozen_btn_theme)
+            dpg.configure_item("live_text", default_value="❚❚ FROZEN", color=(255, 170, 80))
+        else:
+            dpg.configure_item("freeze_button", label="Freeze")
+            dpg.bind_item_theme("freeze_button", 0)
+            dpg.configure_item("live_text", default_value="● LIVE", color=C_HIGH)
 
-    with dpg.window(tag="main_window", label="ROS 2 Overview", no_close=True, no_move=True, no_resize=True):
-        dpg.add_spacer(height=16)
+    TABLE_DEFS = [
+        ("topics_tbl",
+         ["Topic", "Type", "Rate (Hz)", "Delay (s)", "Publisher Nodes", "Subscriber Nodes"]),
+        ("services_tbl", ["Service", "Type", "Node"]),
+        ("actions_tbl", ["Action", "Type", "Server Nodes"]),
+        ("nodes_tbl", ["Node"]),
+    ]
 
-        with dpg.group(horizontal=True, horizontal_spacing=20):
+    def make_table(tag, columns):
+        with dpg.table(tag=tag, header_row=True, borders_outerH=True,
+                       borders_outerV=True, borders_innerH=True, borders_innerV=True,
+                       policy=dpg.mvTable_SizingStretchProp, resizable=True,
+                       row_background=True, scrollY=True, height=-1, freeze_rows=1):
+            for col in columns:
+                dpg.add_table_column(label=col)
+
+    with dpg.window(tag="main_window", label="ROS 2 Overview", no_close=True,
+                    no_move=True, no_resize=True):
+
+        # ---- Header bar -----------------------------------------------------
+        with dpg.group(horizontal=True):
+            dpg.add_text("RUBI", color=C_ACCENT)
+            dpg.add_text("ROS Utility Board Interface", color=C_MUTED)
+            dpg.add_spacer(width=24)
+            dpg.add_text("● LIVE", tag="live_text", color=C_HIGH)
+
+        dpg.add_spacer(height=10)
+
+        with dpg.group(horizontal=True, horizontal_spacing=16):
             dpg.add_button(label="Freeze", tag="freeze_button", callback=toggle_freeze, width=120)
             dpg.add_input_text(tag="global_search", hint="Search (all tabs)...", width=-1)
 
@@ -224,160 +319,156 @@ def main():
         dpg.add_separator()
         dpg.add_spacer(height=8)
 
-        # Nicer Legend Panel
-        with dpg.child_window(height=50, border=True, horizontal_scrollbar=False):
-            with dpg.group(horizontal=True, horizontal_spacing=30, pos=[20, 12]):
-                dpg.add_text("Legends:", color=(220, 220, 220))
+        # ---- Legend (colors match the table cells exactly) ------------------
+        with dpg.child_window(height=46, border=True):
+            with dpg.group(horizontal=True, horizontal_spacing=24):
+                dpg.add_text("Legend:", color=(200, 200, 200))
+                dpg.add_text("< 1 Hz", color=C_LOW)
+                dpg.add_text("1 - 10 Hz", color=C_MID)
+                dpg.add_text("> 10 Hz", color=C_HIGH)
+                dpg.add_text("|", color=(90, 95, 105))
+                dpg.add_text("NaN = no data yet", color=C_MUTED)
+                dpg.add_text("0.0 = no messages", color=C_MUTED)
+                dpg.add_text("None = no nodes", color=C_MUTED)
 
-                dpg.add_text("  * < 1 Hz   ", color=(255, 100, 100))
-                dpg.add_text("  * > 10 Hz  ", color=(100, 255, 100))
-                dpg.add_text("  1 < * < 10 Hz  ", color=(200, 200, 200))
-
-                dpg.add_text("   |   ", color=(160, 160, 160))
-
-                dpg.add_text("NaN = no data yet   ", color=(180, 180, 180))
-                dpg.add_text("0.0 = no messages   ", color=(180, 180, 180))
-                dpg.add_text("None = no nodes", color=(180, 180, 180))
-
-        dpg.add_spacer(height=12)
+        dpg.add_spacer(height=6)
+        dpg.add_text("", tag="status_text", color=C_MUTED)
+        dpg.add_spacer(height=6)
 
         with dpg.tab_bar(tag="main_tabs"):
             with dpg.tab(label="Topics"):
-                with dpg.table(tag="topics_tbl", header_row=True, borders_outerH=True,
-                               borders_outerV=True, borders_innerH=True, borders_innerV=True,
-                               policy=dpg.mvTable_SizingStretchProp, resizable=True, height=-1,
-                               freeze_rows=1):
-                    dpg.add_table_column(label="Topic")
-                    dpg.add_table_column(label="Type")
-                    dpg.add_table_column(label="Rate (Hz)")
-                    dpg.add_table_column(label="Delay (s)")
-                    dpg.add_table_column(label="Publisher Nodes")
-                    dpg.add_table_column(label="Subscriber Nodes")
-
+                make_table(*TABLE_DEFS[0])
             with dpg.tab(label="Services"):
-                with dpg.table(tag="services_tbl", header_row=True, borders_outerH=True,
-                               borders_outerV=True, borders_innerH=True, borders_innerV=True,
-                               policy=dpg.mvTable_SizingStretchProp, resizable=True, height=-1,
-                               freeze_rows=1):
-                    dpg.add_table_column(label="Service")
-                    dpg.add_table_column(label="Type")
-                    dpg.add_table_column(label="Node")
-
+                make_table(*TABLE_DEFS[1])
             with dpg.tab(label="Actions"):
-                with dpg.table(tag="actions_tbl", header_row=True, borders_outerH=True,
-                               borders_outerV=True, borders_innerH=True, borders_innerV=True,
-                               policy=dpg.mvTable_SizingStretchProp, resizable=True, height=-1,
-                               freeze_rows=1):
-                    dpg.add_table_column(label="Action")
-                    dpg.add_table_column(label="Type")
-                    dpg.add_table_column(label="Server Nodes")
-
+                make_table(*TABLE_DEFS[2])
             with dpg.tab(label="Nodes"):
-                with dpg.table(tag="nodes_tbl", header_row=True, borders_outerH=True,
-                               borders_outerV=True, borders_innerH=True, borders_innerV=True,
-                               policy=dpg.mvTable_SizingStretchProp, resizable=True, height=-1,
-                               freeze_rows=1):
-                    dpg.add_table_column(label="Node")
+                make_table(*TABLE_DEFS[3])
 
     dpg.set_primary_window("main_window", True)
     dpg.setup_dearpygui()
     dpg.show_viewport()
 
-    last_scroll_y = {}
+    # ------------------------------------------------------------------------
+    # Flicker-free table syncing.
+    #
+    # `row_index` caches the ordered list of row keys currently shown in each
+    # table. While the set of rows is unchanged (the common case, even as rates
+    # tick) we only overwrite the per-cell values in place -> no flicker, scroll
+    # position preserved. A full rebuild happens only when rows appear/disappear
+    # or the search filter changes (rare).
+    # ------------------------------------------------------------------------
+    row_index = {}
+
+    def sync_table(tag, prefix, desired):
+        keys = [k for k, _ in desired]
+        if row_index.get(tag) == keys:
+            for key, cells in desired:
+                for ci, (text, color) in enumerate(cells):
+                    cell_tag = f"{prefix}|{key}|{ci}"
+                    dpg.set_value(cell_tag, text)
+                    if color is not None:
+                        dpg.configure_item(cell_tag, color=color)
+            return
+
+        y = dpg.get_y_scroll(tag) if dpg.does_item_exist(tag) else 0.0
+        for child in (dpg.get_item_children(tag, 1) or []):
+            dpg.delete_item(child)
+        for key, cells in desired:
+            with dpg.table_row(parent=tag):
+                for ci, (text, color) in enumerate(cells):
+                    kw = {'tag': f"{prefix}|{key}|{ci}"}
+                    if color is not None:
+                        kw['color'] = color
+                    dpg.add_text(text, **kw)
+        row_index[tag] = keys
+        dpg.set_y_scroll(tag, y)
+
+    REFRESH_PERIOD = 0.25  # seconds (UI data refresh ~4 Hz; rendering stays smooth)
+    last_refresh = 0.0
 
     while dpg.is_dearpygui_running():
-        rclpy.spin_once(node, timeout_sec=0.005)
+        now = time.time()
+        if not frozen[0] and now - last_refresh >= REFRESH_PERIOD:
+            last_refresh = now
+            search = (dpg.get_value("global_search") or "").lower()
 
-        if frozen[0]:
-            dpg.render_dearpygui_frame()
-            time.sleep(0.033)
-            continue
+            # Take a quick snapshot under the lock, then build the UI lock-free
+            # so ROS callbacks are never starved.
+            with node.lock:
+                snap_topics = {
+                    n: {'type': s['type'], 'rate': s['rate'], 'delay': s['delay'],
+                        'pubs': list(s['pubs']), 'subs': list(s['subs'])}
+                    for n, s in node.topic_stats.items()
+                }
+                snap_services = {
+                    n: {'type': s['type'], 'nodes': sorted(set(s['nodes']))}
+                    for n, s in node.service_stats.items()
+                }
+                snap_actions = {
+                    n: {'type': s['type'], 'nodes': sorted(set(s['nodes']))}
+                    for n, s in node.action_stats.items()
+                }
+                snap_nodes = list(node.nodes)
 
-        current_tab = dpg.get_value("main_tabs") if dpg.does_item_exist("main_tabs") else None
-
-        if current_tab is not None:
-            table_tag = {0: "topics_tbl", 1: "services_tbl", 2: "actions_tbl", 3: "nodes_tbl"}.get(current_tab)
-            if table_tag and dpg.does_item_exist(table_tag):
-                last_scroll_y[table_tag] = dpg.get_y_scroll(table_tag)
-
-        search = (dpg.get_value("global_search") or "").lower()
-
-        with node.lock:
-            dpg.delete_item("topics_tbl", children_only=True)
-            dpg.add_table_column(label="Topic", parent="topics_tbl")
-            dpg.add_table_column(label="Type", parent="topics_tbl")
-            dpg.add_table_column(label="Rate (Hz)", parent="topics_tbl")
-            dpg.add_table_column(label="Delay (s)", parent="topics_tbl")
-            dpg.add_table_column(label="Publisher Nodes", parent="topics_tbl")
-            dpg.add_table_column(label="Subscriber Nodes", parent="topics_tbl")
-
-            for name in sorted(node.topic_stats):
-                s = node.topic_stats[name]
+            topic_rows = []
+            for name in sorted(snap_topics):
+                s = snap_topics[name]
                 if s['rate'] == 'N/A' and s['delay'] == 'N/A':
                     continue
                 if search and search not in name.lower():
                     continue
                 pubs = "\n".join(s['pubs']) if s['pubs'] else "None"
                 subs = "\n".join(s['subs']) if s['subs'] else "None"
-                with dpg.table_row(parent="topics_tbl"):
-                    dpg.add_text(name)
-                    dpg.add_text(s['type'])
-                    try:
-                        r = float(s['rate'])
-                        color = (255, 100, 100) if r < 1.0 else (200, 255, 200) if r > 10 else (220, 220, 220)
-                    except:
-                        color = (220, 220, 220)
-                    dpg.add_text(s['rate'], color=color)
-                    dpg.add_text(s['delay'])
-                    dpg.add_text(pubs)
-                    dpg.add_text(subs)
+                topic_rows.append((name, [
+                    (name, None),
+                    (s['type'], None),
+                    (s['rate'], _rate_color(s['rate'])),
+                    (s['delay'], None),
+                    (pubs, None),
+                    (subs, None),
+                ]))
 
-            dpg.delete_item("services_tbl", children_only=True)
-            dpg.add_table_column(label="Service", parent="services_tbl")
-            dpg.add_table_column(label="Type", parent="services_tbl")
-            dpg.add_table_column(label="Node", parent="services_tbl")
-
-            for name in sorted(node.service_stats):
-                s = node.service_stats[name]
+            service_rows = []
+            for name in sorted(snap_services):
+                s = snap_services[name]
                 if search and search not in name.lower():
                     continue
-                nodes_str = "\n".join(sorted(set(s['nodes']))) if s['nodes'] else "None"
-                with dpg.table_row(parent="services_tbl"):
-                    dpg.add_text(name)
-                    dpg.add_text(s['type'])
-                    dpg.add_text(nodes_str)
+                nodes_str = "\n".join(s['nodes']) if s['nodes'] else "None"
+                service_rows.append((name, [
+                    (name, None), (s['type'], None), (nodes_str, None),
+                ]))
 
-            dpg.delete_item("actions_tbl", children_only=True)
-            dpg.add_table_column(label="Action", parent="actions_tbl")
-            dpg.add_table_column(label="Type", parent="actions_tbl")
-            dpg.add_table_column(label="Server Nodes", parent="actions_tbl")
-
-            for name in sorted(node.action_stats):
-                s = node.action_stats[name]
+            action_rows = []
+            for name in sorted(snap_actions):
+                s = snap_actions[name]
                 if search and search not in name.lower():
                     continue
-                nodes_str = "\n".join(sorted(set(s['nodes']))) if s['nodes'] else "None"
-                with dpg.table_row(parent="actions_tbl"):
-                    dpg.add_text(name)
-                    dpg.add_text(s['type'])
-                    dpg.add_text(nodes_str)
+                nodes_str = "\n".join(s['nodes']) if s['nodes'] else "None"
+                action_rows.append((name, [
+                    (name, None), (s['type'], None), (nodes_str, None),
+                ]))
 
-            dpg.delete_item("nodes_tbl", children_only=True)
-            dpg.add_table_column(label="Node", parent="nodes_tbl")
-
-            for name in sorted(node.nodes):
+            node_rows = []
+            for name in sorted(snap_nodes):
                 if search and search not in name.lower():
                     continue
-                with dpg.table_row(parent="nodes_tbl"):
-                    dpg.add_text(name)
+                node_rows.append((name, [(name, None)]))
 
-        if current_tab is not None:
-            table_tag = {0: "topics_tbl", 1: "services_tbl", 2: "actions_tbl", 3: "nodes_tbl"}.get(current_tab)
-            if table_tag and dpg.does_item_exist(table_tag) and table_tag in last_scroll_y:
-                dpg.set_y_scroll(table_tag, last_scroll_y[table_tag])
+            sync_table("topics_tbl", "tp", topic_rows)
+            sync_table("services_tbl", "sv", service_rows)
+            sync_table("actions_tbl", "ac", action_rows)
+            sync_table("nodes_tbl", "nd", node_rows)
+
+            dpg.set_value(
+                "status_text",
+                f"Topics {len(topic_rows)}   ·   Services {len(service_rows)}   ·   "
+                f"Actions {len(action_rows)}   ·   Nodes {len(node_rows)}"
+                f"        Updated {time.strftime('%H:%M:%S')}"
+            )
 
         dpg.render_dearpygui_frame()
-        time.sleep(0.033)
+        time.sleep(0.016)  # ~60 FPS for smooth scrolling
 
     dpg.destroy_context()
     rclpy.shutdown()
