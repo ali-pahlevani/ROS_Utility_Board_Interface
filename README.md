@@ -1,5 +1,5 @@
 # RUBI (ROS_Utility_Board_Interface)
-**RUBI v2**: A single-window ROS 2 *control board* — not just a monitor. Live topic rates/bandwidth/delays, QoS mismatch detection, a health watchdog, message inspection, logs, parameters, lifecycle control, TF health, a service/action caller, bag recording, graph snapshot/diff, and exports.
+**RUBI v2**: A single-window ROS 2 *control board* — not just a monitor. Live topic rates/bandwidth/delays, QoS mismatch detection, a health watchdog, message inspection, live plotting, logs, parameters, lifecycle control, TF health, a service/action caller, rosbag record/play, graph snapshot/diff, and exports.
 
 ![RUBI Banner](https://github.com/user-attachments/assets/b971837f-8fa6-4d51-ab8a-e1d1a6dbc03c)
 
@@ -16,6 +16,7 @@
 - **QoS mismatch detector** — shows each topic's QoS and flags incompatible publisher/subscriber pairs (reliability & durability) right in the table — the #1 cause of silent "no data"
 - **Health watchdog** — expected `min_hz` / `max_hz` / `max_delay` per topic (YAML + glob patterns) → instant ✓/✗ status and an alert banner
 - **Message inspector** — peek the latest message of any topic as YAML (with a *live* toggle)
+- **Live plotter** — select a topic, drill into its numeric fields (including array elements like `position[0]` for `/joint_states`), and plot them live vs time; overlay multiple signals with legend, pan/zoom, scrolling window and auto-Y
 - **/rosout log pane** — severity-filtered, color-coded, searchable
 - **Node process metrics** — best-effort PID / CPU% / memory per node (psutil)
 - **TF health** — frame tree (child → parent), per-frame rate, and **stale-transform** detection

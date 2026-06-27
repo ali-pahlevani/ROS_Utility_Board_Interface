@@ -1,0 +1,7 @@
+include README.md
+include LICENSE
+include package.xml
+include rubi_rules.yaml
+include requirements.txt
+include RELEASING.md
+include resource/ros_utility_board_interface

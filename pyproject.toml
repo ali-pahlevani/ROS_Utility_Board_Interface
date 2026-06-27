@@ -1,0 +1,7 @@
+# Build-system declaration so `python -m build` / pip produce clean
+# sdists and wheels for PyPI. Project metadata still lives in setup.py
+# (kept as the single source of truth, which the ROS 2 ament_python /
+# colcon build also reads directly).
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
