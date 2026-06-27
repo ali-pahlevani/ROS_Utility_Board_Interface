@@ -22,39 +22,41 @@
 - **Lifecycle states** — detects lifecycle nodes and shows their current state
 
 **Operate**
-- **Parameter browser & live edit** — list and set parameters on any node
+- **Parameter browser & live edit** — pick a node, choose a parameter from a dropdown, and set it (the value box shows the expected type)
 - **Lifecycle control** — trigger configure / activate / deactivate / cleanup / shutdown
-- **Service & Action caller** — call any service or send any action goal from a YAML request form
-- **One-click bag recording** — start/stop `ros2 bag record` (all topics or a selection)
+- **Service & Action caller** — pick any service/action from a dropdown; its request/goal form is pre-filled from the type, edit and call
+- **Rosbag** — record, play (rate/loop), and inspect bags (`ros2 bag info`); recordings are saved under `Bag/`
 
 **Analyze & share**
 - **Graph snapshot & diff** — capture the graph and diff later to catch intermittent nodes/topics
-- **Export** — current topic table to CSV / Markdown, or the node graph to Graphviz `.dot`
+- **Export** — topic table to CSV / Markdown, or the node graph to Graphviz `.dot` (saved under `CSV/`, `MD/`, `DOT/`)
 - **Multi-domain** — switch `ROS_DOMAIN_ID` from the header (relaunches on the chosen domain)
 
 **Polish**
 - Flicker-free tables (in-place updates, preserved scroll), 60 FPS, clean dark theme, global search, freeze mode.
 
-### Installation
+### Requirements
 
-RUBI works either as a plain script or as a proper ROS 2 package.
+- **ROS 2 Humble or Jazzy**, installed and **sourced**. RUBI uses `rclpy` and
+  ROS interface packages that come from your ROS install — they are *not* on
+  PyPI, so ROS 2 must be present and sourced however you run RUBI.
+- Python 3.8+ and three non-ROS Python packages: `dearpygui`, `pyyaml`, `psutil`.
 
 ```bash
-# 1. Source ROS 2
-source /opt/ros/humble/setup.bash   # or iron, jazzy, etc.
-
-# 2. Install the Python deps not provided by ROS
+source /opt/ros/humble/setup.bash        # or: source /opt/ros/jazzy/setup.bash
 pip install dearpygui pyyaml psutil
 ```
 
-**Option A — run directly:**
+### Installation
+
+**Option A — run directly (quickest):**
 ```bash
 git clone https://github.com/ali-pahlevani/ROS_Utility_Board_Interface.git
 cd ROS_Utility_Board_Interface
 python3 rubi.py                       # or: python3 rubi.py --rules rubi_rules.yaml --domain 0
 ```
 
-**Option B — build as a ROS 2 package (`ros2 run`):**
+**Option B — colcon (recommended for ROS users; enables `ros2 run`):**
 ```bash
 mkdir -p ~/ros2_ws/src && cd ~/ros2_ws/src
 git clone https://github.com/ali-pahlevani/ROS_Utility_Board_Interface.git
@@ -63,11 +65,22 @@ source install/setup.bash
 ros2 run ros_utility_board_interface rubi
 ```
 
-**Option C — pip install (provides a `rubi` command):**
+**Option C — pip install from a clone (adds a `rubi` command):**
 ```bash
+git clone https://github.com/ali-pahlevani/ROS_Utility_Board_Interface.git
+cd ROS_Utility_Board_Interface
 pip install .
-rubi
+rubi                                  # run inside a shell where ROS 2 is sourced
 ```
+
+> `pip install ros-utility-board-interface` directly from PyPI is **not**
+> available yet (the package is not published). Even once published, ROS 2
+> must still be sourced at runtime because `rclpy` is provided by ROS, not pip.
+
+### Outputs
+
+RUBI writes into folders next to where it runs: exports under `CSV/`, `MD/`,
+`DOT/`, and rosbag recordings under `Bag/`.
 
 ### Health watchdog rules
 
