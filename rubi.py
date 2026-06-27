@@ -764,7 +764,7 @@ def main():
         dpg.add_separator()
         dpg.add_spacer(height=8)
 
-        with dpg.child_window(height=46, border=True):
+        with dpg.child_window(height=80, border=True):
             with dpg.group(horizontal=True, horizontal_spacing=18):
                 dpg.add_text("Legend:", color=(200, 200, 200))
                 dpg.add_text("< 1 Hz", color=C_LOW)
@@ -777,6 +777,16 @@ def main():
                 dpg.add_text("NaN=no data", color=C_MUTED)
                 dpg.add_text("0.0=no msgs", color=C_MUTED)
                 dpg.add_text("None=no nodes", color=C_MUTED)
+            with dpg.group(horizontal=True, horizontal_spacing=14):
+                dpg.add_text("QoS:", color=(200, 200, 200))
+                dpg.add_text("reliability·durability", color=C_MUTED)
+                dpg.add_text("|", color=(90, 95, 105))
+                dpg.add_text("R=Reliable", color=C_ACCENT)
+                dpg.add_text("BE=Best-Effort", color=C_ACCENT)
+                dpg.add_text("V=Volatile", color=C_ACCENT)
+                dpg.add_text("TL=Transient-Local", color=C_ACCENT)
+                dpg.add_text("BA=Best-Available", color=C_MUTED)
+                dpg.add_text("SD=System-Default", color=C_MUTED)
 
         dpg.add_spacer(height=6)
         dpg.add_text("", tag="status_text", color=C_MUTED)
