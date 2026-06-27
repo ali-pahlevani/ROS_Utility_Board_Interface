@@ -113,6 +113,5 @@ Contributions are welcome! To contribute:
 
 ---
 
-+ If you have any questions, please let me know: **a.pahlevani1998@gmail.com**
-
-+ Also, don't forget to check out our **website** at: **https://www.SLAMbotics.org**
++ Questions? Reach out: **a.pahlevani1998@gmail.com**
++ LinkedIn: **https://www.linkedin.com/in/ali-pahlevani/**
