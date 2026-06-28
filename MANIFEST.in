@@ -4,4 +4,5 @@ include package.xml
 include rubi_rules.yaml
 include requirements.txt
 include RELEASING.md
+include rubi.py
 include resource/ros_utility_board_interface
