@@ -69,17 +69,17 @@ source install/setup.bash
 ros2 run ros_utility_board_interface rubi
 ```
 
-**Option C — pip install from a clone (adds a `rubi` command):**
+**Option C — pip (adds a `rubi` command):**
 ```bash
-git clone https://github.com/ali-pahlevani/ROS_Utility_Board_Interface.git
-cd ROS_Utility_Board_Interface
-pip install .
-rubi                                  # run inside a shell where ROS 2 is sourced
+pip install ros-utility-board-interface   # from PyPI
+# or, from a clone for development:
+#   git clone https://github.com/ali-pahlevani/ROS_Utility_Board_Interface.git
+#   cd ROS_Utility_Board_Interface && pip install .
+rubi                                       # run inside a shell where ROS 2 is sourced
 ```
 
-> `pip install ros-utility-board-interface` directly from PyPI is **not**
-> available yet (the package is not published). Even once published, ROS 2
-> must still be sourced at runtime because `rclpy` is provided by ROS, not pip.
+> However you install it (pip, PyPI, or colcon), ROS 2 must still be sourced at
+> runtime — `rclpy` is provided by ROS, not pip.
 
 ### Outputs
 
